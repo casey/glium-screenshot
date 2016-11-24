@@ -8,9 +8,7 @@ use glium::glutin::Event;
 mod math;
 use math::*;
 
-use std::fs::File;
 use std::time::Instant;
-use std::path::Path;
 
 fn default<T: Default>() -> T {
   Default::default()
@@ -70,10 +68,13 @@ impl Input {
 }
 
 fn screenshot(facade: &glium::backend::Facade) {
-  let raw: glium::texture::RawImage2d<u8> = facade.get_context().read_front_buffer();
+  let _raw: glium::texture::RawImage2d<u8> = facade.get_context().read_front_buffer();
 
   // code to actually save the screenshot to disk
   /*
+  use std::fs::File;
+  use std::path::Path;
+
   let buffer = image::ImageBuffer::from_raw(
     raw.width,
     raw.height,
