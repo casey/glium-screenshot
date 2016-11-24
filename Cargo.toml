@@ -1,0 +1,10 @@
+[package]
+name        = "glium-screenshot"
+version     = "0.0.0"
+authors     = ["Casey Rodarmor <casey@rodarmor.com>"]
+license     = "WTFPL"
+description = "slow syncronous screenshot"
+
+[dependencies]
+glium = "^0.15.0"
+image = "^0.10.3"
