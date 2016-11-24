@@ -6,5 +6,7 @@ license     = "WTFPL"
 description = "slow syncronous screenshot"
 
 [dependencies]
-glium = "^0.15.0"
+# glium = "^0.15.0"
+
+glium = { git = "https://github.com/tomaka/glium" }
 image = "^0.10.3"
