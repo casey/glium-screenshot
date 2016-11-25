@@ -5,6 +5,12 @@ extern crate image;
 use glium::glutin;
 use glium::glutin::Event;
 
+use glium::Surface;
+
+use std::thread;
+
+use std::collections::VecDeque;
+
 mod math;
 use math::*;
 
@@ -67,11 +73,7 @@ impl Input {
   }
 }
 
-fn screenshot(facade: &glium::backend::Facade) {
-  let _raw: glium::texture::RawImage2d<u8> = facade.get_context().read_front_buffer();
-
-  // code to actually save the screenshot to disk
-  /*
+fn save_to_file(raw: glium::texture::RawImage2d<u8>) {
   use std::fs::File;
   use std::path::Path;
 
@@ -85,10 +87,47 @@ fn screenshot(facade: &glium::backend::Facade) {
 
   let mut destination = File::create(&Path::new("screenshot.png"))
     .expect("screenshot: create failed");
-  
+
   dynamic.save(&mut destination, image::ImageFormat::PNG)
     .expect("screenshot: save failed");
-  */
+}
+
+fn screenshot(facade: &glium::backend::Facade) {
+  let raw = facade.get_context().read_front_buffer();
+
+  save_to_file(raw);
+}
+
+struct AsyncScreenshotTask {
+  pixel_buffer: glium::texture::pixel_buffer::PixelBuffer<(u8, u8, u8, u8)>
+}
+
+impl AsyncScreenshotTask {
+  fn new(facade: &glium::backend::Facade) -> Self {
+    let ctxt = facade.get_context();
+
+    let dimensions = ctxt.get_framebuffer_dimensions();
+    let rect = glium::Rect { left: 0, bottom: 0, width: dimensions.0, height: dimensions.1 };
+    let blit_target = glium::BlitTarget { left: 0, bottom: 0, width: dimensions.0 as i32, height: dimensions.1 as i32 }; // TODO: Use/convert rect?
+
+    let pixel_buffer = {
+      // Create temporary texture and blit the default front buffer to it
+      let texture = glium::texture::Texture2d::empty(facade, dimensions.0, dimensions.1).unwrap();
+      let framebuffer = glium::framebuffer::SimpleFrameBuffer::new(facade, &texture).unwrap();
+      framebuffer.blit_from_frame(&rect, &blit_target, glium::uniforms::MagnifySamplerFilter::Nearest);
+
+      // Read it into new pixel buffer
+      texture.read_to_pixel_buffer()
+    };
+
+    AsyncScreenshotTask {
+      pixel_buffer: pixel_buffer,
+    }
+  }
+
+  fn read_raw<'a>(self) -> glium::texture::RawImage2d<'a, u8> {
+    self.pixel_buffer.read_as_texture_2d().unwrap()
+  }
 }
 
 fn main() {
@@ -110,6 +149,10 @@ fn main() {
   let mut frame: u64 = 0;
 
   let mut frame_times = &mut [0; 60];
+
+  // Amount of frames to wait for the pixel data to arrive from GPU
+  const SCREENSHOT_FRAME_DELAY: u64 = 3;
+  let mut screenshot_tasks = VecDeque::<(u64, AsyncScreenshotTask)>::new();
 
   loop {
     let start = Instant::now();
@@ -143,8 +186,20 @@ fn main() {
         Closed                             => return,
         KeyboardInput(Pressed, _, Some(Q)) => if input.command() { return },
         KeyboardInput(Pressed, _, Some(S)) => screenshot(&display),
-        _                                  => ()
+        KeyboardInput(Pressed, _, Some(A)) => screenshot_tasks.push_back((frame + SCREENSHOT_FRAME_DELAY, AsyncScreenshotTask::new(&display))),
+        _                                  => {}
       }
+    }
+
+    // Check if there are any screenshots queue for pickup on this frame
+    if screenshot_tasks.front().map(|p| p.0) == Some(frame) {
+        let (_, task) = screenshot_tasks.pop_front().unwrap();
+
+        let raw = task.read_raw();
+
+        thread::spawn(move || {
+          save_to_file(raw);
+        });
     }
 
     let elapsed = start.elapsed();
