@@ -178,7 +178,7 @@ fn main() {
   let mut frame_times = &mut [0; 60];
 
   // Amount of frames to wait for the pixel data to arrive from GPU
-  const SCREENSHOT_FRAME_DELAY: u64 = 3;
+  const SCREENSHOT_FRAME_DELAY: u64 = 5; // Tune this based on your requirements. Bigger value means the screenshot will be picked up later. If the value is too small, the main thread will block waiting for the image.
   let mut screenshot_tasks = VecDeque::<(u64, AsyncScreenshotTask)>::new();
 
   loop {
