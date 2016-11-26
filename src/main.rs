@@ -10,6 +10,7 @@ use glium::Surface;
 use std::thread;
 
 use std::collections::VecDeque;
+use std::vec::Vec;
 
 mod math;
 use math::*;
@@ -73,14 +74,25 @@ impl Input {
   }
 }
 
-fn save_to_file(raw: glium::texture::RawImage2d<u8>) {
+fn save_to_file(image_data: RGBAImageData) {
   use std::fs::File;
   use std::path::Path;
 
+  let pixels = {
+    let mut v = Vec::with_capacity(image_data.data.len() * 4);
+    for (a, b, c, d) in image_data.data {
+        v.push(a);
+        v.push(b);
+        v.push(c);
+        v.push(d);
+    }
+    v
+  };
+
   let buffer = image::ImageBuffer::from_raw(
-    raw.width,
-    raw.height,
-    raw.data.into_owned()
+    image_data.width,
+    image_data.height,
+    pixels
   ).expect("screenshot: from_raw failed");
 
   let dynamic = image::DynamicImage::ImageRgba8(buffer).flipv();
@@ -92,10 +104,28 @@ fn save_to_file(raw: glium::texture::RawImage2d<u8>) {
     .expect("screenshot: save failed");
 }
 
-fn screenshot(facade: &glium::backend::Facade) {
-  let raw = facade.get_context().read_front_buffer();
+// Container that holds image data as vector of (u8, u8, u8, u8).
+// This is used to take data from PixelBuffer and move it to another thread with the least conversions done on main thread.
+pub struct RGBAImageData {
+  pub data: Vec<(u8, u8, u8, u8)>,
+  pub width: u32,
+  pub height: u32,
+}
 
-  save_to_file(raw);
+impl glium::texture::Texture2dDataSink<(u8, u8, u8, u8)> for RGBAImageData {
+  fn from_raw(data: std::borrow::Cow<[(u8, u8, u8, u8)]>, width: u32, height: u32) -> Self {
+    RGBAImageData {
+      data: data.into_owned(),
+      width: width,
+      height: height
+    }
+  }
+}
+
+fn screenshot(facade: &glium::backend::Facade) {
+  let image_data = facade.get_context().read_front_buffer();
+
+  save_to_file(image_data);
 }
 
 struct AsyncScreenshotTask {
@@ -104,28 +134,25 @@ struct AsyncScreenshotTask {
 
 impl AsyncScreenshotTask {
   fn new(facade: &glium::backend::Facade) -> Self {
-    let ctxt = facade.get_context();
-
-    let dimensions = ctxt.get_framebuffer_dimensions();
+    // Get information about current framebuffer
+    let dimensions = facade.get_context().get_framebuffer_dimensions();
     let rect = glium::Rect { left: 0, bottom: 0, width: dimensions.0, height: dimensions.1 };
-    let blit_target = glium::BlitTarget { left: 0, bottom: 0, width: dimensions.0 as i32, height: dimensions.1 as i32 }; // TODO: Use/convert rect?
+    let blit_target = glium::BlitTarget { left: 0, bottom: 0, width: dimensions.0 as i32, height: dimensions.1 as i32 };
 
-    let pixel_buffer = {
-      // Create temporary texture and blit the default front buffer to it
-      let texture = glium::texture::Texture2d::empty(facade, dimensions.0, dimensions.1).unwrap();
-      let framebuffer = glium::framebuffer::SimpleFrameBuffer::new(facade, &texture).unwrap();
-      framebuffer.blit_from_frame(&rect, &blit_target, glium::uniforms::MagnifySamplerFilter::Nearest);
+    // Create temporary texture and blit the default front buffer to it
+    let texture = glium::texture::Texture2d::empty(facade, dimensions.0, dimensions.1).unwrap();
+    let framebuffer = glium::framebuffer::SimpleFrameBuffer::new(facade, &texture).unwrap();
+    framebuffer.blit_from_frame(&rect, &blit_target, glium::uniforms::MagnifySamplerFilter::Nearest);
 
-      // Read it into new pixel buffer
-      texture.read_to_pixel_buffer()
-    };
+    // Read it into new pixel buffer
+    let pixel_buffer = texture.read_to_pixel_buffer();
 
     AsyncScreenshotTask {
       pixel_buffer: pixel_buffer,
     }
   }
 
-  fn read_raw<'a>(self) -> glium::texture::RawImage2d<'a, u8> {
+  fn read_image_data(self) -> RGBAImageData {
     self.pixel_buffer.read_as_texture_2d().unwrap()
   }
 }
@@ -193,13 +220,13 @@ fn main() {
 
     // Check if there are any screenshots queue for pickup on this frame
     if screenshot_tasks.front().map(|p| p.0) == Some(frame) {
-        let (_, task) = screenshot_tasks.pop_front().unwrap();
+      let (_, task) = screenshot_tasks.pop_front().unwrap();
 
-        let raw = task.read_raw();
+      let image_data = task.read_image_data();
 
-        thread::spawn(move || {
-          save_to_file(raw);
-        });
+      thread::spawn(move || {
+        save_to_file(image_data);
+      });
     }
 
     let elapsed = start.elapsed();
